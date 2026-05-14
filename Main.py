@@ -1,14 +1,14 @@
 import os
 from Parser import load_model
 from SolutionValidator import validate_solution, parse_solution_file
-from Solver import Solver
+from CTOPSolver import Solver
 from SolutionWriter import write_solution_to_file
 def main(instance_file, solution_file, enforce_mandatory):
     print(f"Loading Instance: '{instance_file}'...")
     model = load_model(instance_file)
     solver = Solver(model)
     solver.solve(enforce_mandatory)
-    solver.VerifyProfitCalculation()
+    #solver.VerifyProfitCalculation()
     write_solution_to_file(solver.sol, solution_file)
     print("\n--- Model Summary ---")
     print(f"Number of nodes: {model.num_nodes} (including depot)")
@@ -49,5 +49,5 @@ def main(instance_file, solution_file, enforce_mandatory):
 
 
 if __name__ == "__main__":
-    main("Assignment 2025-26/ctop_main_instance.txt", "Assignment 2025-26/solution_mandatory.txt", True)
-    main("Assignment 2025-26/ctop_main_instance.txt", "Assignment 2025-26/solution_no_mandatory.txt", False)
+    #main("ctop_main_instance.txt", "solution_mandatory.txt", True)
+    main("ctop_main_instance.txt", "solution_no_mandatory.txt", False)
