@@ -2,6 +2,7 @@ from Parser import *
 from dataclasses import dataclass
 from typing import List
 import random
+import copy
 
 class Route:
     """
@@ -76,9 +77,10 @@ class Solver:
         self.cost_matrix: List[List[float]] = m.cost_matrix
         self.depot = m.nodes[0]
         self.BIG_NUMBER = 10**4
-        self.rcl_size = 3
+        self.rcl_size = 4
         self.bonus = {}
         self.mandatory_penalties = 10**5
+
 
     def solve(self,enforce_mandatory):
 
@@ -92,48 +94,44 @@ class Solver:
             self.sol = improved_solution
             return self.sol
         else:
-            #self.MinimumInsertionsWithRcl(4)
-
-
-            solutions=[]
+            seeds = [4, 8, 15, 16, 23, 42]
+            solutions = []
             for seed in seeds:
-                solutions.append(self.MinimumInsertionsWithRcl(seed))
-            solutions.sort(key=lambda x:x.totalprofit,reverse=True)
-            for sol in solutions:
-                print(sol.totalprofit)
+                self.SetRoutedFlagToFalseForAllNodes()
+                current_res = self.MinimumInsertionsWithRcl(seed)
+                solutions.append(current_res)
+                print(f"Seed: {seed} | Profit: {current_res.totalprofit}")
+            solutions.sort(key=lambda x: x.totalprofit, reverse=True)
+            self.sol = solutions[0]
+            return self.sol
 
-    def InitializeBonuses(self):
-        self.bonus = {
-            n.id: {r_idx: 0 for r_idx in range(self.vehicles)}
-            for n in self.nodes if n.isMandatory
-        }
+
     def SetRoutedFlagToFalseForAllNodes(self):
        #Mark every node as unrouted
         for node in self.nodes:
             node.isRouted = False
-
+    #-----------NO_MANDATORY INSTANCE AREA-----------#
     def MinimumInsertionsWithRcl(self,seed):
         random.seed(seed)
-        self.sol = Solution()
+        sol = Solution()
         for _ in range(self.vehicles):
             new_route = Route(self.depot,self.t_max, self.capacity)
-            self.sol.routes.append(new_route)
-        unvisited_customers = [n for n in self.nodes if not n.isDepot]
+            sol.routes.append(new_route)
+        unvisited_customers = [n for n in self.nodes if not n.isDepot and not n.isRouted]
         while unvisited_customers:
             best_insertion = CustomerInsertAllPositions()
-            self.IdentifyBestCustomerInsertionwithRcl(best_insertion, unvisited_customers, seed)
+            self.IdentifyBestCustomerInsertionwithRcl(sol,best_insertion, unvisited_customers, seed)
             if best_insertion.customer is not None:
-                self.ApplyBestCustomerInsertionwithRcl(best_insertion, unvisited_customers)
+                self.ApplyBestCustomerInsertionwithRcl(sol,best_insertion, unvisited_customers)
             else:
                 break
 
-        return self.sol
+        return sol
 
-    def IdentifyBestCustomerInsertionwithRcl(self, best_insertion,unvisited_customers,seed):
+    def IdentifyBestCustomerInsertionwithRcl(self,sol, best_insertion,unvisited_customers,seed):
         rcl = []
-
         for customer in unvisited_customers:
-            for route in self.sol.routes:
+            for route in sol.routes:
                 for i in range(0, len(route.sequenceOfNodes)-1):
                     A = route.sequenceOfNodes[i]
                     B = route.sequenceOfNodes[i+1]
@@ -169,7 +167,7 @@ class Solver:
             best_insertion.profit       = chosen[4]
             best_insertion.position     = chosen[5]
 
-    def ApplyBestCustomerInsertionwithRcl(self,best_insertion,univisited_customers):
+    def ApplyBestCustomerInsertionwithRcl(self,sol,best_insertion,univisited_customers):
         #Unpacking the object
         customer = best_insertion.customer
         univisited_customers.remove(customer)
@@ -180,20 +178,12 @@ class Solver:
         route.profit += customer.profit
         route.cost += best_insertion.cost_change
         customer.isRouted = True
-        self.sol.totalcost += best_insertion.cost_change
-        self.sol.totalprofit += customer.profit
+        sol.totalcost += best_insertion.cost_change
+        sol.totalprofit += customer.profit
 
 
 
-    def  ViolateTimeConstraint(self, route, cost_change):
-        """This method checks whether or not by inserting a node(customer) we violate the time constraint
-            It returns True in case of a violation,False otherwise """
-        return route.cost + cost_change > route.t_max -(1e-3)
 
-    def ViolateCapacityConstraint(self, route, customer):
-        """This method checks whether or not by inserting a node(customer) we violate the capacity constraint
-            It returns True in case of a violation,False otherwise """
-        return route.load + customer.demand > route.capacity
     #-----------Mandatory_instance Area-----------#
     def InitializeBonuses(self):
         self.bonus = {
@@ -268,6 +258,7 @@ class Solver:
 
 
     def VerifyProfitCalculation(self):
+
         """
         Recomputes profit from scratch and compares with stored values.
         Catches bugs where route.profit / sol.totalprofit drift from reality.
@@ -301,6 +292,16 @@ class Solver:
                 print(f"  - {issue}")
         else:
             print(f"✓ Profit consistent. Total = {recomputed_total}")
+#------Area of functions designed to check if we have a constraint violation------#
+    def  ViolateTimeConstraint(self, route, cost_change):
+            """This method checks whether or not by inserting a node(customer) we violate the time constraint
+                It returns True in case of a violation,False otherwise """
+            return route.cost + cost_change > route.t_max -(1e-3)
+
+    def ViolateCapacityConstraint(self, route, customer):
+        """This method checks whether or not by inserting a node(customer) we violate the capacity constraint
+            It returns True in case of a violation,False otherwise """
+        return route.load + customer.demand > route.capacity
 #------Area of functions designed to clone(copy) solutions/routes------#
     def CloneSolution(self,solution):
         cloned = Solution()
