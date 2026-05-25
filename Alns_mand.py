@@ -1,11 +1,9 @@
 import copy
 import numpy as np
 import numpy.random as rnd
-import matplotlib.pyplot as plt
 from alns import ALNS
-from alns.accept import RecordToRecordTravel
-from alns.select import RouletteWheel, AlphaUCB, MABSelector, SegmentedRouletteWheel, RandomSelect
-from alns.accept import SimulatedAnnealing, HillClimbing
+from alns.select import AlphaUCB
+from alns.accept import SimulatedAnnealing
 from alns.stop import MaxIterations
 from CTOPSolver import Solution, Route
 class CtopState:
@@ -13,13 +11,12 @@ class CtopState:
 
     def __init__(self, routes_as_ids, unassigned, model):
         self.routes_as_ids = routes_as_ids   # List[List[int]]
-        self.unassigned = unassigned          # set[int] — μόνο optional
+        self.unassigned = unassigned          # set[int] —
         self.model = model
+
     def objective(self):
         return -(self.BIG_NUMBER * self.total_profit() - self.total_cost())
-
     def copy(self):
-        """Deep copy της δομής. Model παραμένει shared reference."""
         return CtopState(
             [list(r) for r in self.routes_as_ids],
             set(self.unassigned),
@@ -113,7 +110,6 @@ def state_to_solution(state):
         node.isRouted = False
 
     for route_ids in state.routes_as_ids:
-        # Παράλειψε empty routes (μόνο [0, 0])
 
 
         route = Route(
@@ -154,10 +150,10 @@ def state_to_solution(state):
 def random_removal(state, rnd_state):
     state = state.copy()
     """
-    Destroy operator:Removing N optianl nodes from the route,Mandatory nodes never
+    Destroy operator:Removing N optinal nodes from the route,Mandatory nodes never
     removed
 
-    N = 15% of the current routed optional.
+    N = 10% of the current routed optional.
     """
     #Candidates for removal
     candidates = [
@@ -171,7 +167,7 @@ def random_removal(state, rnd_state):
         return state
 
     #How many to remove
-    degree_of_destruction = 0.15
+    degree_of_destruction = 0.10
     n_to_remove = max(1, int(degree_of_destruction * len(candidates)))
     n_to_remove = min(n_to_remove, len(candidates))
 
@@ -191,6 +187,7 @@ def random_removal(state, rnd_state):
     state.unassigned.update(selected_ids)
 
     return state
+
 def shaw_removal(state, rnd_state):
     state = state.copy()
 
@@ -204,7 +201,7 @@ def shaw_removal(state, rnd_state):
         return state
 
     # Destruction degree
-    degree_of_destruction = 0.1
+    degree_of_destruction = 0.08
     n_to_remove = max(2, int(degree_of_destruction * len(routed_optional)))
     n_to_remove = min(n_to_remove, len(routed_optional))
 
@@ -266,7 +263,7 @@ def shaw_removal(state, rnd_state):
 def worst_removal(state, rnd_state):
     state = state.copy()
     """
-    Destroy operator: Removes optianal nodes with smaller contrbibution
+    Destroy operator: Removes optianal nodes with smaller contribution
     Contribution = M·profit − detour_cost .
     Mandatory never removed.
     """
@@ -291,7 +288,7 @@ def worst_removal(state, rnd_state):
 
     candidates.sort(key=lambda x: x[0])
     #How many to remove
-    degree_of_destruction = rnd_state.uniform(0.1, 0.35)
+    degree_of_destruction = 0.05
     n_to_remove = max(1, int(degree_of_destruction * len(candidates)))
     n_to_remove = min(n_to_remove, len(candidates))
 
@@ -353,7 +350,7 @@ def regret_2_repair(state, rnd_state):
             if len(insertions) >= 2:
                 regret = best_mc - insertions[1][0]
             else:
-                regret = float('inf')
+                regret = 0
 
             if best_choice is None or regret > best_choice[0]:
                 best_choice = (regret, cust_id, best_r_idx, best_pos)
@@ -425,8 +422,8 @@ def greedy_repair(state, rnd_state):
     return state
 
 #Statistics
-def print_operator_stats(result, seed):
-    print(f"\n--- Operator Statistics (Seed {seed}) ---")
+def print_operator_stats(result):
+    print(f"\n--- Operator Statistics ")
 
     print(f"\n  Destroy Operators:")
     print(f"  {'Name':<20} {'Total':>7} {'Best':>6} {'Better':>7} {'Accept':>7} {'Reject':>7}")
@@ -461,18 +458,20 @@ def run_alns(model, solution, iterations):
     repairOperators = len(alns.repair_operators)
 
     # Selection
-    select = AlphaUCB(scores=[10, 5, 2, 0], alpha=0.50,
+    select = AlphaUCB(scores=[10, 5, 1, 0], alpha=0.1,
                             num_destroy=destroyOperators,
                             num_repair=repairOperators)
     #Acceptance
-    accept = SimulatedAnnealing(start_temperature=80,
-                                    end_temperature=0.01, step=0.99)
-
+    accept = SimulatedAnnealing(start_temperature=750_000,
+                                    end_temperature=0.01, step=0.995)
 
     alns.on_best(lambda s, r: print(f"  New Best: profit = {s.total_profit()}"))
-
     # Iterate
     result = alns.iterate(init_state, select, accept, MaxIterations(iterations))
+    print(f"Τελική θερμοκρασία: {accept._temperature:.4f}")
+    print_operator_stats(result)
     solution = state_to_solution(result.best_state)
     return solution
+
+
 

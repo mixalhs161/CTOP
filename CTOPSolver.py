@@ -74,13 +74,12 @@ class InsertMove:
         self.moveCost = None
         self.node = None
 
-
     def Initialize(self):
         self.targetRoutePosition = None
         self.targetNodePosition = None
         self.costChange = 0
         self.profitChange = 0
-        self.moveCost = -10**9  # Initialize to a very small number since we are maximizing profit
+        self.moveCost = -10**9
         self.node = None
 
 class RelocationMove(object):
@@ -149,33 +148,31 @@ class Solver:
         self.cost_matrix: List[List[float]] = m.cost_matrix
         self.depot = m.nodes[0]
         self.BIG_NUMBER = 10**4
-        self.rcl_size = 4
-        self.bonus = {}
-        self.mandatory_penalties = 10**5
-        self.max_iterations = 1200
-        self.starting_temperature = 47
+        self.rcl_size = 5
+        self.urgency = {}
+        self.mandatory_bonus = 10**5
+        self.max_iterations = 1000
+        self.starting_temperature = 100
         self.final_temperature = 0.01
         self.cooling_rate = 0.995
+        self.perturbation_agressiveness = 0.06
 
 
 
     def solve(self,enforce_mandatory):
 
-        seeds=[4, 8, 15, 16, 23, 42]
         self.enforce_mandatory = enforce_mandatory
         self.SetRoutedFlagToFalseForAllNodes()
         if self.enforce_mandatory:
-            self.MinimumInsertionsMandatory()
+            self.BestInsertionsMandatory()
             from Alns_mand import run_alns
-            improved_solution = run_alns(self.model, self.sol,6000)
+            improved_solution = run_alns(self.model, self.sol,15000)
             self.sol = improved_solution
-
             return self.sol
         else:
-            self.SetRoutedFlagToFalseForAllNodes()
-            self.MinimumInsertionsWithRcl(4)
-            self.Ils_Sa()
-
+                self.SetRoutedFlagToFalseForAllNodes()
+                self.BestInsertionsWithRcl(16)
+                self.Ils_Sa()
 
 
     def FindBestSwapBetweenRouted_Unrouted(self,smru):
@@ -252,7 +249,6 @@ class Solver:
                             continue
                         if self.ViolateTimeConstraint(route,cost_change):
                             continue
-
                         profit_change = node.profit
                         move_cost = (self.BIG_NUMBER * profit_change) - cost_change
                         if move_cost > im.moveCost:
@@ -296,10 +292,7 @@ class Solver:
                         cost_change_second_route = self.cost_matrix[F.id][B.id] + self.cost_matrix[B.id][G.id] - self.cost_matrix[F.id][G.id]
                         total_cost_change = cost_change_first_route + cost_change_second_route
 
-                        if originRouteIndex == targetRouteIndex:
-                            if self.ViolateTimeConstraint(rt1,total_cost_change):
-                                continue
-                        else:
+                        if originRouteIndex != targetRouteIndex:
 
                             if self.ViolateTimeConstraint(rt2, cost_change_second_route):
                                 continue
@@ -308,10 +301,7 @@ class Solver:
 
                         profitChangeOriginRt = -B.profit
                         profitChangeTargetRt = B.profit
-                        profit_change = profitChangeOriginRt + profitChangeTargetRt
-
-                        move_cost = (self.BIG_NUMBER * profit_change) - total_cost_change
-
+                        move_cost =  - (total_cost_change)
                         if move_cost > rl.moveCost:
                             rl.originRoutePosition = originRouteIndex
                             rl.targetRoutePosition = targetRouteIndex
@@ -322,12 +312,11 @@ class Solver:
                             rl.costChangeTargetRt = cost_change_second_route
                             rl.profitChangeOriginRt = profitChangeOriginRt
                             rl.profitChangeTargetRt = profitChangeTargetRt
-                            rl.profitChange = profit_change
+                            rl.profitChange = 0
                             rl.moveCost = move_cost
 
+
     def ApplyRelocationMove(self, rl: RelocationMove):
-
-
         originRt = self.sol.routes[rl.originRoutePosition]
         targetRt = self.sol.routes[rl.targetRoutePosition]
 
@@ -371,12 +360,6 @@ class Solver:
                         if rt1 == rt2:
                             if nodeIdx1 == 0 and nodeIdx2 == len(rt1.sequenceOfNodes) - 2:
                                 continue
-                            costChange = ((self.cost_matrix[A.id][K.id] + self.cost_matrix[B.id][L.id])
-                                        - (self.cost_matrix[A.id][B.id] + self.cost_matrix[K.id][L.id]))
-
-                            if rt1.cost + costChange > self.t_max:
-                                continue
-
                         else:
                             if nodeIdx1 == 0 and nodeIdx2 == 0:
                                 continue
@@ -393,9 +376,6 @@ class Solver:
                             new_cost_rt2 = self.CostAfterTailSwap(rt1, nodeIdx1, rt2, nodeIdx2, is_first=False)
                             if new_cost_rt1 > self.t_max or new_cost_rt2 > self.t_max:
                                 continue
-
-
-
                         moveCost = -costChange
                         if moveCost > top.moveCost:
                             top.positionOfFirstRoute = rt1Idx
@@ -467,24 +447,22 @@ class Solver:
 
     #-----------NO_MANDATORY INSTANCE AREA-----------#
     def Ils_Sa(self):
+
         ils_iterations = 0
         current_temperature = self.starting_temperature
         self.LocalSearch()
         local_optimum = self.CloneSolution(self.sol)
         best_solution = local_optimum
         stagnation_counter = 0
-        deltas =[]
         while (ils_iterations <= self.max_iterations and current_temperature > self.final_temperature):
             self.Perturb()
             self.LocalSearch()
-            delta = self.sol.totalprofit - local_optimum.totalprofit
-            if delta < 0:
-                deltas.append(abs(delta))
             if self.sol.totalprofit > local_optimum.totalprofit:
                 local_optimum = self.CloneSolution(self.sol)
-                stagnation_counter = 0
+                stagnation_counter += 1
                 if self.sol.totalprofit > best_solution.totalprofit:
-                    best_solution = local_optimum
+                    best_solution = self.CloneSolution(local_optimum)
+                    stagnation_counter = 0
             elif math.exp((self.sol.totalprofit - local_optimum.totalprofit)/current_temperature) > random.uniform(0,1):
                 local_optimum = self.CloneSolution(self.sol)
                 stagnation_counter += 1
@@ -492,20 +470,22 @@ class Solver:
                 self.sol = self.CloneSolution(local_optimum)
                 self.RebuildRoutedFlags()
                 stagnation_counter += 1
-            if stagnation_counter >= 50:
-                current_temperature = self.starting_temperature * 0.1
+            if stagnation_counter >= 100:
+                print(f'  REHEAT at iteration {ils_iterations} | best profit: {best_solution.totalprofit}')
+                current_temperature = self.starting_temperature * 0.25
+                self.perturbation_agressiveness -= 0.01
+                self.sol = self.CloneSolution(best_solution)
+                self.RebuildRoutedFlags()
+                local_optimum = self.CloneSolution(best_solution)
                 stagnation_counter = 0
             current_temperature = self.UpdateTemperature(current_temperature)
             ils_iterations += 1
 
-            print(f'Iteration {ils_iterations} | profit {self.sol.totalprofit}' )
+            print(f'Iteration {ils_iterations} | profit {self.sol.totalprofit} | best optimum:{best_solution.totalprofit}'  )
         self.sol = self.CloneSolution(best_solution)
-        print(f'Mean |delta|: {sum(deltas)/len(deltas):.2f}')
-        print(f'Max |delta|: {max(deltas)}')
-        print(f'Min |delta|: {min(deltas)}')
+
     def UpdateTemperature(self,current_temperature):
         return current_temperature*self.cooling_rate
-
     def LocalSearch(self):
 
         terminal_condition = False
@@ -514,7 +494,6 @@ class Solver:
         rl = RelocationMove()
         im = InsertMove()
         smru = SwapBetweenUnrouted_Routed()
-
         two_opt_local_optimum = False
         relocation_local_optimum = False
         insertion_local_optimum = False
@@ -523,14 +502,14 @@ class Solver:
             while not two_opt_local_optimum:
                 top.Initialize()
                 self.FindBestTwoOptMove(top)
-                if top.costChange < 0:
+                if top.costChange < -0.01:
                     self.ApplyTwoOptMove(top)
                 else:
                     two_opt_local_optimum = True
             while not relocation_local_optimum:
                 rl.Initialize()
                 self.FindBestRelocationMove(rl)
-                if rl.costChange < 0:
+                if rl.costChange < -0.01:
                     self.ApplyRelocationMove(rl)
                 else:
                     relocation_local_optimum = True
@@ -538,7 +517,6 @@ class Solver:
                 im.Initialize()
                 self.FindBestInsertMove(im)
                 if im.moveCost > 0:
-
                     self.ApplyInsertMove(im)
                 else:
                     insertion_local_optimum = True
@@ -546,18 +524,15 @@ class Solver:
                 smru.Initialize()
                 self.FindBestSwapBetweenRouted_Unrouted(smru)
                 if smru.moveCost > 0:
-
                     self.ApplyBestMoveBetweenRouted_Unrouted(smru)
                 else:
                     swap_local_optimum = True
             terminal_condition = True
-
         return self.sol
-
 
     def Perturb(self):
         self.Node_Removal()
-        self.RepairSolutionWithMinimumInsertions()
+        self.RepairSolutionWithBestInsertions()
 
     def Node_Removal(self):
         candidates = [n
@@ -565,10 +540,15 @@ class Solver:
                       for n in rt.sequenceOfNodes
                       if n.isRouted and  not n.isDepot
                        ]
-        total_nodes_in_solution = len(candidates)
+        num_of_nodes_to_remove = max(3,int(self.perturbation_agressiveness*len(candidates)))
 
-        num_of_nodes_to_remove = random.randint(5,10)
-        nodes_to_remove = random.sample(candidates, num_of_nodes_to_remove)
+        if random.random() < 0.2:
+
+            candidates.sort(key=lambda n: n.profit / max(n.demand, 1))
+            nodes_to_remove = candidates[:num_of_nodes_to_remove]
+        else:
+            nodes_to_remove = random.sample(candidates, num_of_nodes_to_remove)
+
         for node in nodes_to_remove:
             for rt in self.sol.routes:
                 if node in rt.sequenceOfNodes:
@@ -584,7 +564,7 @@ class Solver:
 
         self.sol.totalcost = sum(rt.cost for rt in self.sol.routes)
 
-    def RepairSolutionWithMinimumInsertions(self):
+    def RepairSolutionWithBestInsertions(self):
         unvisited_nodes = [n for n in self.nodes if not n.isDepot and not n.isRouted]
         while unvisited_nodes:
             best_insertion = CustomerInsertAllPositions()
@@ -619,7 +599,7 @@ class Solver:
                         best_insertion.profit       = profit_change
                         best_insertion.position     = i+1
 
-    def MinimumInsertionsWithRcl(self,seed):
+    def BestInsertionsWithRcl(self,seed):
         random.seed(seed)
         self.sol = Solution()
         for _ in range(self.vehicles):
@@ -678,13 +658,13 @@ class Solver:
 
 
     #-----------Mandatory_instance Area-----------#
-    def InitializeBonuses(self):
-        self.bonus = {
+    def InitializeUrgency(self):
+        self.urgency = {
             n.id: {r_idx: 0 for r_idx in range(self.vehicles)}
             for n in self.nodes if n.isMandatory
         }
-    def MinimumInsertionsMandatory(self):
-        self.InitializeBonuses()
+    def BestInsertionsMandatory(self):
+        self.InitializeUrgency()
         self.sol = Solution()
         for _ in range(self.vehicles):
             new_route = Route(self.depot,self.t_max, self.capacity)
@@ -713,7 +693,7 @@ class Solver:
                     r_idx = self.sol.routes.index(route)
                     if node.isMandatory:
                         move_cost = (self.BIG_NUMBER * profit_change) - cost_change \
-                        + self.mandatory_penalties * self.bonus[node.id][r_idx]
+                        + self.mandatory_bonus * self.urgency[node.id][r_idx]
                     else:
                         move_cost = (self.BIG_NUMBER * profit_change) - cost_change
                     #Check feasibility
@@ -745,52 +725,19 @@ class Solver:
         self.sol.totalprofit += node.profit
         if self.enforce_mandatory:
             for n in unvisited_nodes:
-                if n.isMandatory:
+                if n.isMandatory and node.isMandatory:
                     for r_idx in range(self.vehicles):
                         if self.sol.routes[r_idx] != best_insertion.route:
-                            self.bonus[n.id][r_idx] += 1
+                            self.urgency[n.id][r_idx] += 1
+                elif n.isMandatory and not node.isMandatory:
+                    for r_idx in range(self.vehicles):
+                            self.urgency[n.id][r_idx] += 1
 
-
-    def VerifyProfitCalculation(self):
-
-        """
-        Recomputes profit from scratch and compares with stored values.
-        Catches bugs where route.profit / sol.totalprofit drift from reality.
-        """
-        print("\n--- Profit Verification ---")
-        inconsistencies = []
-        recomputed_total = 0
-
-        for idx, route in enumerate(self.sol.routes):
-            # Επανυπολογισμός profit του route
-            recomputed = sum(
-                n.profit for n in route.sequenceOfNodes if not n.isDepot
-            )
-            recomputed_total += recomputed
-
-            # Σύγκριση με stored
-            if recomputed != route.profit:
-                inconsistencies.append(
-                    f"Route {idx}: stored={route.profit}, recomputed={recomputed}"
-                )
-
-        # Σύγκριση συνολικού profit
-        if recomputed_total != self.sol.totalprofit:
-            inconsistencies.append(
-                f"Total: stored={self.sol.totalprofit}, recomputed={recomputed_total}"
-            )
-
-        if inconsistencies:
-            print("✗ Profit inconsistencies found:")
-            for issue in inconsistencies:
-                print(f"  - {issue}")
-        else:
-            print(f"✓ Profit consistent. Total = {recomputed_total}")
 #------Area of functions designed to check if we have a constraint violation------#
     def  ViolateTimeConstraint(self, route, cost_change):
             """This method checks whether or not by inserting a node(customer) we violate the time constraint
                 It returns True in case of a violation,False otherwise """
-            return route.cost + cost_change > route.t_max -(1e-3)
+            return route.cost + cost_change > route.t_max
 
     def ViolateCapacityConstraint(self, route, customer):
         """This method checks whether or not by inserting a node(customer) we violate the capacity constraint

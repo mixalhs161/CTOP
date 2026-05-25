@@ -8,7 +8,8 @@ def main(instance_file, solution_file, enforce_mandatory):
     model = load_model(instance_file)
     solver = Solver(model)
     solver.solve(enforce_mandatory)
-    #solver.VerifyProfitCalculation()
+    solver.VerifyProfitCalculation()
+    solver.VerifyCostCalculation()
     write_solution_to_file(solver.sol, solution_file)
     print("\n--- Model Summary ---")
     print(f"Number of nodes: {model.num_nodes} (including depot)")
@@ -49,5 +50,5 @@ def main(instance_file, solution_file, enforce_mandatory):
 
 
 if __name__ == "__main__":
-    #main("ctop_main_instance.txt", "solution_mandatory.txt", True)
+    main("ctop_main_instance.txt", "solution_mandatory.txt", True)
     main("ctop_main_instance.txt", "solution_no_mandatory.txt", False)
