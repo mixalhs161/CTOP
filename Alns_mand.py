@@ -6,16 +6,25 @@ from alns.select import AlphaUCB
 from alns.accept import SimulatedAnnealing
 from alns.stop import MaxIterations
 from CTOPSolver import Solution, Route
+import optuna
 class CtopState:
-    BIG_NUMBER = 10**4   # Same as Solver
-
+    BIG_NUMBER = 10**4
     def __init__(self, routes_as_ids, unassigned, model):
         self.routes_as_ids = routes_as_ids   # List[List[int]]
         self.unassigned = unassigned          # set[int] —
         self.model = model
-
+        self.mandatory_bonus = 10**5
+        self.urgency =  {n.id: { r_idx:0  for r_idx in  range (0,len(routes_as_ids))}
+                         for n in model.nodes if n.isMandatory}
     def objective(self):
-        return -(self.BIG_NUMBER * self.total_profit() - self.total_cost())
+        INFEASIBLE_PENALTY = 10 **7
+        #Get unrouted mandatory nodes
+        routed_ids = {nid for route in self.routes_as_ids for nid in route}
+        unrouted_mandatory = sum(1 for n in self.model.nodes if n.isMandatory and n.id not in routed_ids)
+        # unrouted_mandatory =  (self.unrouted_mandatory_ids)
+        base = (self.BIG_NUMBER*self.total_profit()- self.total_cost())
+        penalty = INFEASIBLE_PENALTY* unrouted_mandatory
+        return -(base-penalty)
     def copy(self):
         return CtopState(
             [list(r) for r in self.routes_as_ids],
@@ -38,6 +47,10 @@ class CtopState:
             for route in self.routes_as_ids
             for i in range(len(route) - 1)
         )
+    def unrouted_mandatory_ids(self):
+        routed_ids = {nid for route in self.routes_as_ids for nid in route}
+        unrouted_mandatory_ids = {n.id for n in self.model.nodes if n.id not in routed_ids and n.isMandatory}
+        return unrouted_mandatory_ids
     @staticmethod
     def from_solution(solution, model):
         """
@@ -160,7 +173,7 @@ def random_removal(state, rnd_state):
         nid
         for route in state.routes_as_ids
         for nid in route
-        if nid != 0 and not state.model.nodes[nid].isMandatory
+        if nid != 0
     ]
 
     if not candidates:
@@ -188,13 +201,14 @@ def random_removal(state, rnd_state):
 
     return state
 
+
 def shaw_removal(state, rnd_state):
     state = state.copy()
 
     routed_optional = [
         nid for route in state.routes_as_ids
         for nid in route
-        if nid != 0 and not state.model.nodes[nid].isMandatory
+        if nid != 0
     ]
 
     if len(routed_optional) < 2:
@@ -234,8 +248,8 @@ def shaw_removal(state, rnd_state):
     relatedness_scores = []
     for i, nid in enumerate(others):
         score = (alpha * distances[i] / max_d
-                 + beta * demand_diffs[i] / max_dem
-                 + gamma * profit_diffs[i] / max_p)
+                + beta * demand_diffs[i] / max_dem
+                + gamma * profit_diffs[i] / max_p)
         relatedness_scores.append((score, nid))
 
 
@@ -259,7 +273,6 @@ def shaw_removal(state, rnd_state):
     state.unassigned.update(selected_ids)
 
     return state
-
 def worst_removal(state, rnd_state):
     state = state.copy()
     """
@@ -271,14 +284,11 @@ def worst_removal(state, rnd_state):
     for route in state.routes_as_ids:
         for pos in range(1, len(route) - 1):
             nid = route[pos]
-            if state.model.nodes[nid].isMandatory:
-                continue
-
             A = route[pos - 1]
             B = route[pos + 1]
             detour = (state.model.cost_matrix[A][nid]
-                      + state.model.cost_matrix[nid][B]
-                      - state.model.cost_matrix[A][B])
+                    + state.model.cost_matrix[nid][B]
+                    - state.model.cost_matrix[A][B])
             profit = state.model.nodes[nid].profit
             contribution = state.BIG_NUMBER * profit - detour
             candidates.append((contribution, nid))
@@ -310,6 +320,7 @@ def worst_removal(state, rnd_state):
     state.unassigned.update(selected_ids)
 
     return state
+
 #-----------REPAIR-OPERATORS---------#
 def regret_2_repair(state, rnd_state):
     state = state.copy()
@@ -337,8 +348,10 @@ def regret_2_repair(state, rnd_state):
                           - state.model.cost_matrix[A][B])
                     if route_costs[route_idx] + ic > state.model.t_max:
                         continue
-
-                    mc = state.BIG_NUMBER * cust_profit - ic
+                    bonus = 0
+                    if state.model.nodes[cust_id].isMandatory:
+                        bonus = state.urgency[cust_id][route_idx] * state.mandatory_bonus
+                    mc = state.BIG_NUMBER * cust_profit - ic + bonus
                     insertions.append((mc, route_idx, pos))
 
             if not insertions:
@@ -353,21 +366,29 @@ def regret_2_repair(state, rnd_state):
                 regret = 0
 
             if best_choice is None or regret > best_choice[0]:
-                best_choice = (regret, cust_id, best_r_idx, best_pos)
+                best_choice = (regret, cust_id, best_r_idx, best_pos, ic)
 
         if best_choice is None:
             break
 
         # Insertion + update cache
-        _, cust_id, r_idx, pos = best_choice
+        _, cust_id, r_idx, pos, ic = best_choice
         state.routes_as_ids[r_idx].insert(pos, cust_id)
         state.unassigned.discard(cust_id)
-
-        A = state.routes_as_ids[r_idx][pos - 1]
-        B = state.routes_as_ids[r_idx][pos + 1]
-        ic = (state.model.cost_matrix[A][cust_id]
-              + state.model.cost_matrix[cust_id][B]
-              - state.model.cost_matrix[A][B])
+        #Urgency update
+        if state.model.nodes[cust_id].isMandatory:
+            for ridx in range(len(state.routes_as_ids)):
+                state.urgency[cust_id][ridx] = 0
+            for nid in state.unassigned:
+                if  state.model.nodes[nid].isMandatory:
+                    for ridx in range(len(state.routes_as_ids)):
+                        if ridx != r_idx:
+                            state.urgency[nid][ridx] +=1
+        if not state.model.nodes[cust_id].isMandatory:
+            for nid in state.unassigned:
+                if state.model.nodes[nid].isMandatory:
+                    for ridx in range(len(state.routes_as_ids)):
+                        state.urgency[nid][ridx] +=1
         route_costs[r_idx] += ic
         route_loads[r_idx] += state.model.nodes[cust_id].demand
 
@@ -398,24 +419,35 @@ def greedy_repair(state, rnd_state):
 
                     if route_costs[route_idx] + ic > state.model.t_max:
                         continue
-
-                    mc = state.BIG_NUMBER * cust_profit - ic
+                    bonus = 0
+                    if state.model.nodes[cust_id].isMandatory:
+                        bonus = state.urgency[cust_id][route_idx]*state.mandatory_bonus
+                    mc = state.BIG_NUMBER * cust_profit - ic + bonus
                     if best is None or mc > best[0]:
-                        best = (mc, cust_id, route_idx, pos)
+                        best = (mc, cust_id, route_idx, pos,ic)
 
         if best is None:
             break
 
-        _, cust_id, r_idx, pos = best
+        _, cust_id, r_idx, pos,ic = best
         state.routes_as_ids[r_idx].insert(pos, cust_id)
         state.unassigned.discard(cust_id)
-
+        #Urgency update
+        if state.model.nodes[cust_id].isMandatory:
+            for ridx in range(len(state.routes_as_ids)):
+                state.urgency[cust_id][ridx] = 0
+            #get other unrouted mandatory nodes
+            for nid in state.unassigned:
+                if state.model.nodes[nid].isMandatory:
+                    for ridx in range(len(state.routes_as_ids)):
+                        if ridx != r_idx:
+                            state.urgency[nid][ridx] +=1
+        if not state.model.nodes[cust_id].isMandatory:
+            for nid in state.unassigned:
+                if state.model.nodes[nid].isMandatory:
+                    for ridx in range(len(state.routes_as_ids)):
+                            state.urgency[nid][ridx] +=1
         # Update cache
-        A = state.routes_as_ids[r_idx][pos - 1]
-        B = state.routes_as_ids[r_idx][pos + 1]
-        ic = (state.model.cost_matrix[A][cust_id]
-              + state.model.cost_matrix[cust_id][B]
-              - state.model.cost_matrix[A][B])
         route_costs[r_idx] += ic
         route_loads[r_idx] += state.model.nodes[cust_id].demand
 
@@ -458,18 +490,17 @@ def run_alns(model, solution, iterations):
     repairOperators = len(alns.repair_operators)
 
     # Selection
-    select = AlphaUCB(scores=[10, 5, 1, 0], alpha=0.1,
+    select = AlphaUCB(scores=[10, 5, 1, 0], alpha=0.10,
                             num_destroy=destroyOperators,
                             num_repair=repairOperators)
     #Acceptance
     accept = SimulatedAnnealing(start_temperature=750_000,
                                     end_temperature=0.01, step=0.995)
 
-    alns.on_best(lambda s, r: print(f"  New Best: profit = {s.total_profit()}"))
+    alns.on_best(lambda s, r: print(f" New Best: profit = {s.total_profit()}"))
     # Iterate
     result = alns.iterate(init_state, select, accept, MaxIterations(iterations))
-    print(f"Τελική θερμοκρασία: {accept._temperature:.4f}")
-    print_operator_stats(result)
+    #print_operator_stats(result)
     solution = state_to_solution(result.best_state)
     return solution
 
