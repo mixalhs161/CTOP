@@ -2,7 +2,7 @@ from Parser import *
 from dataclasses import dataclass
 from typing import List
 import random
-import copy
+import optuna
 import math
 class Route:
     """
@@ -157,8 +157,6 @@ class Solver:
         self.cooling_rate = 0.995
         self.perturbation_agressiveness = 0.06
 
-
-
     def solve(self,enforce_mandatory):
 
         self.enforce_mandatory = enforce_mandatory
@@ -166,7 +164,7 @@ class Solver:
         if self.enforce_mandatory:
             self.BestInsertionsMandatory()
             from Alns_mand import run_alns
-            improved_solution = run_alns(self.model, self.sol,15000)
+            improved_solution = run_alns(self.model, self.sol, 13000)
             self.sol = improved_solution
             return self.sol
         else:
@@ -674,7 +672,7 @@ class Solver:
             best_insertion = CustomerInsertAllPositions()
             self.IdentifyBestCustomerInsertionMandatory(best_insertion, unvisited_customers)
             if best_insertion.node is not None:
-                self.ApplyBestCustomerInsertion(best_insertion, unvisited_customers)
+                self.ApplyBestCustomerInsertionMandatory(best_insertion, unvisited_customers)
             else:
                 break
         print(self.sol.totalprofit)
@@ -708,6 +706,28 @@ class Solver:
                         best_insertion.cost_change  = cost_change
                         best_insertion.profit       = profit_change
                         best_insertion.position     = i+1
+
+    def ApplyBestCustomerInsertionMandatory(self,best_insertion,unvisited_nodes):
+        #Unpacking the object
+        node = best_insertion.node
+        unvisited_nodes.remove(node)
+        route = best_insertion.route
+        position = best_insertion.position
+        route.sequenceOfNodes.insert(position, node)
+        route.load += node.demand
+        route.profit += node.profit
+        route.cost += best_insertion.cost_change
+        node.isRouted = True
+        self.sol.totalcost += best_insertion.cost_change
+        self.sol.totalprofit += node.profit
+        for n in unvisited_nodes:
+            if n.isMandatory and node.isMandatory:
+                for r_idx in range(self.vehicles):
+                    if self.sol.routes[r_idx] != best_insertion.route:
+                        self.urgency[n.id][r_idx] += 1
+            elif n.isMandatory and not node.isMandatory:
+                for r_idx in range(self.vehicles):
+                        self.urgency[n.id][r_idx] += 1
 
 
     def ApplyBestCustomerInsertion(self,best_insertion,unvisited_nodes):
